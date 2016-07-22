@@ -253,8 +253,10 @@ port_stderr = new Port(p_stderr);
 function VSVM (code) {
     this.code = code;
     this.regs = {};
-    for(var key in regs)
-        this.regs[key] = 0x0;
+    for(var key in regs) {
+        if(!key.match(/^[0-9]+$/))
+            this.regs[regs[key]] = 0x0;
+    }
     this.ports = [];
     this.ports.legnth = 3;
     this.ports[p_stdin] = port_stdin;
@@ -265,7 +267,7 @@ function VSVM (code) {
 }
 
 VSVM.prototype.cycle = function() {
-    var cp = this.regs['cp'];
+    var cp = this.regs[r_cp];
     var i  = this.code[cp];
 
     if(this.halt)
@@ -291,24 +293,24 @@ VSVM.prototype.cycle = function() {
             break;
         case o_lrl:
             dbg("LRL to " + regs[opbot] + ", value: " + val);
-            this.regs[regs[opbot]] = val;
+            this.regs[opbot] = val;
             break;
         case o_out:
-            var v = this.regs[regs[opbot]];
+            var v = this.regs[opbot];
             dbg("OUT from reg " + regs[opbot] + "(" + v + "), port: " + val);
             this.ports[val].out(v);
             break;
         case o_psh:
-            dbg("PUSH value in reg: " + regs[val] + "(" + this.regs[regs[val]] + ")");
-            this.stack.push(this.regs[regs[val]]);
+            dbg("PUSH value in reg: " + regs[val] + "(" + this.regs[val] + ")");
+            this.stack.push(this.regs[val]);
             break;
         case o_pop:
-            this.regs[regs[opbot]] = this.stack.pop();
-            dbg("POP to reg: " + regs[opbot] + ", got: " + this.regs[regs[opbot]]);
+            this.regs[opbot] = this.stack.pop();
+            dbg("POP to reg: " + regs[opbot] + ", got: " + this.regs[opbot]);
             break;
         case o_peek:
-            this.regs[regs[opbot]] = this.stack[this.stack.length-1];
-            dbg("PEEK to reg: " + regs[opbot] + ", got: " + this.regs[regs[opbot]]);
+            this.regs[opbot] = this.stack[this.stack.length-1];
+            dbg("PEEK to reg: " + regs[opbot] + ", got: " + this.regs[opbot]);
             break;
         case 0xF:
             // Extended operations
@@ -324,7 +326,7 @@ VSVM.prototype.cycle = function() {
         default:
             console.log("Unhandled op: 0x" + optop.toString(16));
     }
-    this.regs['cp']++;
+    this.regs[r_cp]++;
 };
 
 var compiled = compile(code);
