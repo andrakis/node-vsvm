@@ -28,6 +28,7 @@ o_jcmp= 0x11; // jump with comparison
 o_xor = 0x12;// xor [reg1], [mask]
 o_ext = 0xF; // extended instruction
 o_e_halt = 0x01; // halt system
+o_e_stat = 0x0F; // print state
 ops = {};
 ops.nop = o_nop;
 ops.lrl = o_lrl;
@@ -42,6 +43,7 @@ ops.stle= o_stle;
 ops.jcmp= o_jcmp;
 ops.xor = o_xor;
 ops.halt = (0xF0) | o_e_halt;
+ops.stat = (0xF0) | o_e_stat;
 
 r_cp  = 0x0;
 r_r0  = 0x1;
@@ -89,6 +91,7 @@ _jcmp= (WhichReg, CpAddition) =>
     mi(o_jcmp, WhichReg, CpAddition)
 _xor = (Reg, Mask)=> mi(o_xor, Reg, Mask)
 _halt= ()         => 0x1F << 8;
+_stat= ()         => 0xFF << 8;
 ins = {};
 ins.nop = _nop;
 ins.lrl = _lrl;
@@ -103,6 +106,7 @@ ins.stle= _stle;
 ins.jcmp= _jcmp;
 ins.xor = _xor;
 ins.halt=_halt;
+ins.stat=_stat;
 
 function dbg () {
     if(debug)
@@ -126,13 +130,45 @@ code = "lrl r0, 'H'\n" +
        "out stdout, r3\n" +
        "halt\n";
 
-code = "lrl r0, 65\n" +
+// print same by adjusting values
+code = 
+       // push '!'
+       "lrl r0, '!'\n" +
+       "push r0\n" +
+
+       "lrl ac, 0\n" +    // reset ac
+       "peek r0\n" +      // pull stored value from stack
+       "lrl r1, 78\n" +   // add 78 (using ac)
+       "push ac\n" +
+
+       // now want to add -3
+       "lrl dc, 0\n" +     // clear dc
+       "lrl r1, 3\n" +     // load 3
+       "push dc\n" +       // dc now has -3, push it
+       "lrl ac, 0\n" +     // clear ac
+       "pop r0\n" +        // read -3
+       "peek r0\n" +       // ac is now -3 + 111
+       "push r0\n" +       // duplicate
+
+       // calculate -7 for next char
+       "lrl dc, 0\n" +     // clear dc
+       "lrl r1, 7\n" +     // load 3
+       "push dc\n" +       // dc now has -3, push it
+       "lrl ac, 0\n" +     // clear ac
+       "pop r0\n" +        // read -3
+       "peek r0\n" +       // ac is now -3 + 111
+       "push ac\n" +       // duplicate
+       "stat\n" +
+       "halt\n";
+
+if(0)code = "lrl r0, 65\n" +
        "push r0\n" +
        "lrl r0, 0\n" +
        "peek r0\n" +
        "out stdout, r0\n" +
        "pop r1\n" +
        "out stdout, r1\n" +
+       "stat\n" +
        "halt";
 const flatten = arr => arr.reduce(
   (a, b) => a.concat(Array.isArray(b) ? flatten(b) : b), []
@@ -287,29 +323,38 @@ VSVM.prototype.cycle = function() {
     dbg("Opbot:", opbot.toString(2), opbot);
     dbg("Value:", val.toString(2), val);
 
+    var v = 0x0;
+
     switch(optop) {
         case o_nop:
             dbg("NOP");
             break;
         case o_lrl:
             dbg("LRL to " + regs[opbot] + ", value: " + val);
-            this.regs[opbot] = val;
+            v = this.regs[opbot] = val;
+            break;
+        case o_rlr:
+            dbg("RLR from " + regs[opbot] + " to " + regs[val]);
+            v = this.regs[opbot] = this.regs[val];
             break;
         case o_out:
-            var v = this.regs[opbot];
-            dbg("OUT from reg " + regs[opbot] + "(" + v + "), port: " + val);
+            //v = this.regs[opbot];
+            dbg("OUT from reg " + regs[opbot] + "(" + this.regs[opbot] + "), port: " + val);
             this.ports[val].out(v);
             break;
         case o_psh:
             dbg("PUSH value in reg: " + regs[val] + "(" + this.regs[val] + ")");
             this.stack.push(this.regs[val]);
+            v = this.regs[val];
             break;
         case o_pop:
             this.regs[opbot] = this.stack.pop();
+            v = this.regs[opbot];
             dbg("POP to reg: " + regs[opbot] + ", got: " + this.regs[opbot]);
             break;
         case o_peek:
             this.regs[opbot] = this.stack[this.stack.length-1];
+            v = this.regs[opbot];
             dbg("PEEK to reg: " + regs[opbot] + ", got: " + this.regs[opbot]);
             break;
         case 0xF:
@@ -319,6 +364,10 @@ VSVM.prototype.cycle = function() {
                     dbg("HALT");
                     this.halt = true;
                     break;
+                case o_e_stat:
+                    dbg("STAT");
+                    console.log("CPU state:", this.getStatePretty());
+                    break;
                 default:
                     console.log("Unhandled extended op: 0x" + opbot.toString(16));
             }
@@ -326,7 +375,29 @@ VSVM.prototype.cycle = function() {
         default:
             console.log("Unhandled op: 0x" + optop.toString(16));
     }
+    if(v) {
+        this.regs[r_ac] += v;
+        this.regs[r_dc] -= v;
+        this.regs[r_mt0] = (v > 0 ? 1 : 0);
+        this.regs[r_lt0] = (v < 0 ? 1 : 0);
+        this.regs[r_eq0] = (v == 0 ? 1 : 0);
+    }
     this.regs[r_cp]++;
+};
+
+VSVM.prototype.getStatePretty = function() {
+    var s = ['CPU State: { Registers: '];
+    var x = {};
+    for(var key in regs) {
+        if(!key.match(/^[0-9]+$/)) {
+            s.push(key + ': ' + this.regs[regs[key]]);
+        }
+    }
+    s.push('Stack: [');
+    for(var i = 0; i < this.stack.length; i++)
+        s.push(i + ": " + this.stack[i]);
+    s.push(']');
+    return s.join(', ') + ' }';
 };
 
 var compiled = compile(code);
