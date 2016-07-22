@@ -1,4 +1,17 @@
-var debug = 0x1;
+/**
+ *
+ * Tricks:
+ *   copy a value from one register to another:
+ *     push reg_to_copy_from
+ *     pop reg_to_copy_to
+ *   jump to a label:
+ *     lrl r0, $end
+ *     push r0
+ *     pop cp
+ *     end:
+ *     halt
+ */
+var debug = 0x0;
 
 n = (N) => N || 0
 // multi op: single 32bit number specifies 8bit instruction, 8bit register (if any),
@@ -16,16 +29,15 @@ o_nop = 0x0;
 o_lrl = 0x1; // load to register from literal
 o_lra = 0x2; // load to register from address
 o_rla = 0x3; // load from register to address
-o_rlr = 0x4; // load from register to register
-o_in  = 0x5; // read from port
-o_out = 0x6; // write to port
-o_psh = 0x7; // push onto stack
-o_pop = 0x8; // pop from stack
-o_peek= 0x9; // peek at stack
-o_stle= 0x10; // get stack length
-o_jcmp= 0x11; // jump with comparison
-              // jcmp mt0, 34
-o_xor = 0x12;// xor [reg1], [mask]
+o_in  = 0x4; // read from port
+o_out = 0x5; // write to port
+o_psh = 0x6; // push onto stack
+o_pop = 0x7; // pop from stack
+o_peek= 0x8; // peek at stack
+o_stle= 0x9; // get stack length
+o_jcmp= 0xA; // jump with comparison
+             // jcmp mt0, 34     # only jumps to 34 if mt0 is 1
+o_xor = 0xB; // xor [reg1], [mask]
 o_ext = 0xF; // extended instruction
 o_e_halt = 0x01; // halt system
 o_e_stat = 0x0F; // print state
@@ -33,7 +45,6 @@ ops = {};
 ops.nop = o_nop;
 ops.lrl = o_lrl;
 ops.rla = o_rla;
-ops.lrl = o_rlr;
 ops.in  = o_in;
 ops.put = o_out;
 ops.psh = o_psh;
@@ -87,8 +98,8 @@ _push= (Value)    => mi1(o_psh, Value)
 _pop = (Reg)      => mi(o_pop,  Reg, 0x0)
 _peek= (Reg)      => mi(o_peek, Reg, 0x0)
 _stle= ()         => mi(o_stle, 0x0, 0x0)
-_jcmp= (WhichReg, CpAddition) =>
-    mi(o_jcmp, WhichReg, CpAddition)
+_jcmp= (WhichReg, Location) =>
+    mi(o_jcmp, WhichReg, Location)
 _xor = (Reg, Mask)=> mi(o_xor, Reg, Mask)
 _halt= ()         => 0x1F << 8;
 _stat= ()         => 0xFF << 8;
@@ -108,6 +119,11 @@ ins.xor = _xor;
 ins.halt=_halt;
 ins.stat=_stat;
 
+// Extended instructions take more than a 32bit instruction size.
+// Their total size is indicated by this table, which is currently empty.
+var extended_ins = {
+};
+
 function dbg () {
     if(debug)
         console.log.apply(console, arguments);
@@ -120,6 +136,7 @@ var symbols = {
     ins: ins
 };
 
+// Print: 'Hi!\n'
 code = "lrl r0, 'H'\n" +
        "lrl r1, 'i'\n" +
        "lrl r2, '!'\n" +
@@ -130,7 +147,8 @@ code = "lrl r0, 'H'\n" +
        "out stdout, r3\n" +
        "halt\n";
 
-// print same by adjusting values
+// print 'Hello!' by using accumulator and decumulator and
+// operating on the last character pushed
 code = 
        // push '!'
        "lrl r0, '!'\n" +
@@ -147,19 +165,60 @@ code =
        "push dc\n" +       // dc now has -3, push it
        "lrl ac, 0\n" +     // clear ac
        "pop r0\n" +        // read -3
-       "peek r0\n" +       // ac is now -3 + 111
-       "push r0\n" +       // duplicate
+       "peek r0\n" +       // read 111
+       "push ac\n" +       // ac is now -3 + 111
+       "peek r0\n" +       // peek and push to duplicate
+       "push r0\n" +
 
        // calculate -7 for next char
        "lrl dc, 0\n" +     // clear dc
-       "lrl r1, 7\n" +     // load 3
-       "push dc\n" +       // dc now has -3, push it
+       "lrl r1, 7\n" +     // load 7
+       "push dc\n" +       // dc now has -7, push it
        "lrl ac, 0\n" +     // clear ac
-       "pop r0\n" +        // read -3
-       "peek r0\n" +       // ac is now -3 + 111
-       "push ac\n" +       // duplicate
+       "pop r0\n" +        // read -7
+       "peek r0\n" +       // ac is now -7 + 108
+       "push ac\n" +       // push char
+
+       // calculate -29 for next char
+       "lrl dc, 0\n" +     // clear dc
+       "lrl r1, 29\n" +    // load 29
+       "push dc\n" +       // dc now has -29, push it
+       "lrl ac, 0\n" +     // clear ac
+       "pop r0\n" +        // read -29
+       "peek r0\n" +       // ac is now -29 + 101
+       "push ac\n" +       // push char
        "stat\n" +
        "halt\n";
+
+// Test the comment parsing and label substitution
+code = `
+# This is a comment
+start:      # Also a comment
+lrl r0, 1   # Final comment
+push r0
+lrl r0, '#'    # Push something in quotes
+push r0
+lrl r0, $start # Load a label address
+stat
+# Clear stack
+pop r1
+pop r1
+# Sneaky. Endless loop here if you remove the next 3 lines
+  lrl r0, $end
+  push r0
+  pop cp
+push r0
+pop cp
+end:
+halt
+`;
+
+if(0) code = `
+lrl r0, '#'    # Push something in quotes
+push r0
+stat
+halt
+`;
 
 if(0)code = "lrl r0, 65\n" +
        "push r0\n" +
@@ -170,36 +229,201 @@ if(0)code = "lrl r0, 65\n" +
        "out stdout, r1\n" +
        "stat\n" +
        "halt";
+
+// Print the numbers 0 - 9 and halt
+code = `
+    # uses r2 for current count
+    lrl r2, 1
+    # uses r3 for character to output
+    # load '0' into it to begin
+    lrl r3, '0'
+
+    again:
+        # print char
+        out stdout, r3
+        # calc r2 + 1 and store
+        push r2
+        lrl ac, 0
+        pop r2
+        lrl r0, 1
+        push ac
+        pop r2
+
+        # calc r3 + 1 and store
+        push r3
+        lrl ac, 0
+        pop r3
+        lrl r0, 1
+        push ac
+        pop r3
+
+        # check if r2 has reached 9 yet
+        push r2
+        lrl ac, 0
+        lrl dc, 0
+        lrl r0, 11
+        push dc
+        lrl ac, 0
+        pop r0
+        pop r0
+        push ac
+        pop r0
+        jcmp lt0, $again
+
+        # Print a newline
+        lrl r0, 10
+        out stdout, r0
+        halt
+`;
+
 const flatten = arr => arr.reduce(
   (a, b) => a.concat(Array.isArray(b) ? flatten(b) : b), []
 );
 
+var regex_allowable_symbol = new RegExp(/^\$([A-Za-z_$][A-Za-z0-9_$]*)/);
+var regex_label = new RegExp(/^\s*([A-Za-z_$][A-Za-z0-9_$]*):/);
+
 function compile (c) {
     lines = c.split("\n");
-    var result = [];
-    for(var i = 0; i < lines.length; i++) {
-        result.push(compile_line(lines[i]));
-    }
-    return flatten(result);
+    var state = { symbols: {}, data: [] };
+    // Order:
+    //  1 Parse all lines, clean them of comments, and insert placeholders
+    //  2 Parse all lines again, converting them to instruction creation
+    //    calls. That is, return something like: [ 'lrl', 'r0', '$end' ]
+    //  3 Parse instruction creation lists:
+    //    - each opcode defaults to a single 32bit number.
+    //    - some opcodes are extended and may be 32+16bits
+    //    - Produce an output list that resolves symbol addresses by
+    //      keeping a running count of bytes output (depending on opcode)
+    //      and setting symbols to equal their occurance position
+    //  4 Parse instruction creation lists again and call instruction
+    //    creation function with resolved parameters.
+    // Stage 1 and 2:
+    var result = lines.map(line => compile_line(line, state));
+    // Stage 3:
+    // Instead of counting bytes, we're just counting ops here.
+    // This is because we're not currently using a byte-based memory format.
+    // Presently any operation takes a single memory location, regardless of size
+    var ins_counter = 0;
+    result.forEach(ic => {
+        if(ic.length == 0)
+            return;
+        var i = ic[0];
+        var params = ic.slice(1);
+        dbg(` St3: instruction: ${i}, params:`, params);
+        /* Not used: not using byte-based memory
+        if(extended_ins[i])
+            ins_counter++;
+        */
+        var label = i.match(regex_label);
+        if(label) {
+            var name = label[1];
+            dbg(`Found label '${name}' at estimate pos: ${ins_counter}`);
+            if(state.symbols[name] !== undefined) {
+                dbg(`WARN: Symbol redefinition of '${name}'`, state.symbols[name]);
+            }
+            // change the instruction to a nop
+            ic[0] = 'nop';
+            state.symbols[name] = ins_counter;
+        }
+        ins_counter++;
+    });
+    dbg("Stage 3 state:", state);
+    // Stage 4
+    result = result.map(ic => {
+        // This time we'll go through params and replace $symbols.
+        // Then we'll call the instruction generation function
+        if(ic.length == 0) return [];
+        ic = ic.map((I, Index) => {
+            if(Index == 0) return I; // skip instruction, only do parameters
+            if(typeof I == 'string') {
+                var m = I.match(regex_allowable_symbol);
+                var name = m[1];
+                dbg(" St4:", m);
+                if(state.symbols[name] === undefined) {
+                    throw 'could not resolve: $' + name;
+                }
+                return state.symbols[name];
+            }
+            return I;
+        });
+        // Call instruction creation function with params
+        var i = ic[0];
+        var params = ic.slice(1);
+        return ins[i].apply({}, params);
+    });
+    result = flatten(result);
+    dbg("\n\nFinal result:\n\n",result);
+    return result;
 }
 
-function compile_line (line) {
-    if(line.length == 0) return _nop();
-    var m = line.match(/^([A-Za-z]+)(.*$)?/);
+function compile_line (line, state) {
+    line = remove_comments(line).trim();
+    if(line.length == 0) return [  ];
+    var m;
+    m = line.match(regex_label);
+    if(m) {
+        var label = m[1];
+        dbg('Label:', label);
+        state.symbols[label] = undefined; // will be filled later
+        return [ m[1] + ':' ];
+    }
+    m = line.match(/^([A-Za-z]+)(?: (.*$))?/);
     dbg(m);
     if(!m) throw 'unable to parse: ' + line;
     var i = m[1];
     var params = m[2] ? m[2].trim() : undefined;
     var found = ins[i];
     if(found) {
-        return compile_ins(i, params);
+        return compile_ins(i, params, state);
     } else {
         throw "unknown ins: " + i;
     }
 }
 
+function remove_comments (line) {
+    var in_speech = false, speech_type = "";
+    var comment = '#', in_comment = false;
+    var out = "";
+    line.split('').forEach((C) => {
+        //console.log(`ch: ${C}, in_sp: ${in_speech}, st: ${speech_type}, in_c: ${in_comment}`);
+        if(in_comment) return;
+        switch(C) {
+            case comment:
+                if(!in_speech) {
+                    in_comment = true;
+                } else {
+                    out += C;
+                }
+                break;
+           case '"':
+                if(!in_speech) {
+                    speech_type = '"';
+                    in_speech = true;
+                } else if(in_speech && speech_type == '"') {
+                    in_speech = false;
+                }
+                out += C;
+                break;
+           case "'":
+                if(!in_speech) {
+                    speech_type = "'";
+                    in_speech = true;
+                } else if(in_speech && speech_type == "'") {
+                    in_speech = false;
+                }
+                out += C;
+                break;
+           default:
+                out += C;
+                break;
+        }
+    });
+    return out;
+}
+
 var plist_cache = {};
-function compile_ins (i, params) {
+function compile_ins (i, params, state) {
     // Parse function to get the parameters
     var plist = plist_cache[i];
     var req_params;
@@ -230,7 +454,7 @@ function compile_ins (i, params) {
     }
     var parse_params = giv_params.map(compile_ins_param);
     dbg(parse_params);
-    return ins[i].apply({}, parse_params);
+    return [i].concat(parse_params); //ins[i].apply({}, parse_params);
 }
 
 function compile_ins_param (p) {
@@ -256,6 +480,8 @@ function compile_ins_param_inner (p) {
         dbg("Parse charcode of `" + ch + "` to: " + ch.charCodeAt(0));
         return ch.charCodeAt(0);
     }
+    // Matches $symbol
+    if(p[0] == '$') return p;
     for(var key in symbols) {
         for(var name in symbols[key]) {
             if(name == p) {
@@ -313,15 +539,15 @@ VSVM.prototype.cycle = function() {
         throw 'no instruction';
 
     // Break down instruction
-    dbg("Instruction:", i.toString(2), i);
+    dbg("  Instruction:", i.toString(2), i);
     var op = i >> 8;
-    dbg("Op:", op.toString(2), op);
+    dbg("  Op:", op.toString(2), op);
     var val = i & 0xFF;
     var opbot = op >> 4;
     var optop = op & 0xF;
-    dbg("Optop:", optop.toString(2), optop);
-    dbg("Opbot:", opbot.toString(2), opbot);
-    dbg("Value:", val.toString(2), val);
+    dbg("  Optop:", optop.toString(2), optop);
+    dbg("  Opbot:", opbot.toString(2), opbot);
+    dbg("  Value:", val.toString(2), val);
 
     var v = 0x0;
 
@@ -333,14 +559,10 @@ VSVM.prototype.cycle = function() {
             dbg("LRL to " + regs[opbot] + ", value: " + val);
             v = this.regs[opbot] = val;
             break;
-        case o_rlr:
-            dbg("RLR from " + regs[opbot] + " to " + regs[val]);
-            v = this.regs[opbot] = this.regs[val];
-            break;
         case o_out:
             //v = this.regs[opbot];
             dbg("OUT from reg " + regs[opbot] + "(" + this.regs[opbot] + "), port: " + val);
-            this.ports[val].out(v);
+            this.ports[val].out(this.regs[opbot]);
             break;
         case o_psh:
             dbg("PUSH value in reg: " + regs[val] + "(" + this.regs[val] + ")");
@@ -356,6 +578,11 @@ VSVM.prototype.cycle = function() {
             this.regs[opbot] = this.stack[this.stack.length-1];
             v = this.regs[opbot];
             dbg("PEEK to reg: " + regs[opbot] + ", got: " + this.regs[opbot]);
+            break;
+        case o_jcmp:
+            dbg("JCMP, jump to " + val + " if " + regs[opbot] + "(" + this.regs[opbot] + ") is !0");
+            if(this.regs[opbot])
+                this.regs[r_cp] = val;
             break;
         case 0xF:
             // Extended operations
@@ -404,6 +631,6 @@ var compiled = compile(code);
 dbg("Compiled code: ", compiled);
 var vm = new VSVM(compiled);
 
-do {
+if(1) do {
     vm.cycle();
 } while (!vm.halt && !vm.int_scheduled);
