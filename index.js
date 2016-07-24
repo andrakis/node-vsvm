@@ -11,18 +11,39 @@
  *     end:
  *     halt
  */
-var debug = 0x0;
+var debug = 0x1;
 
 n = (N) => N || 0
+m8888 = (A, B, C, D) => {
+	// 32bit number
+	var ab = new ArrayBuffer(4);
+	var vw = new DataView(ab);
+	vw.setUint8(0, A);
+	vw.setUint8(1, B);
+	vw.setUint8(2, C);
+	vw.setUint8(3, D);
+	return vw.getUint32(0);
+};
+m8816 = (A, B, C) => {
+	var ab = new ArrayBuffer(4);
+	var vw = new DataView(ab);
+	vw.setUint8(0, A);
+	vw.setUint8(1, B);
+	vw.setUint16(2, C);
+	return vw.getUint32(0);
+};
 // multi op: single 32bit number specifies 8bit instruction, 8bit register (if any),
 //           and 16bit number for value
-mi = (I, O, V) => [(((n(I) << 0) | (n(O) << 4)) << 8) | n(V)]
-// simple op: single 32bit number specifies 16bit instruction, and a 24bit number
+//mi = (I, O, V) => [(((n(I) << 0) | (n(O) << 8)) << 8) | n(V)]
+//mi = (I, O, V) => [(((n(I) << 4) | O) << 8) | n(V)]
+mi = (I, O, V) => [m8816(I, O, V)];
+// simple op: single 32bit number specifies 16bit instruction, and a 16bit number
 //           for value.
-mi1 = (I, O) => [(n(I) << 8) | n(O)]
-// extended op: single 32bit number specifies instruction, another 32bit
-//           specifies value
-mi2 = (I, O, V) => [(n(I) << 0) | (n(O) << 8), n(V)]
+mi1 = (I, V)   => [m8816(I, 0, V)];
+// TODO: WRONG
+// extended op: single 32bit number specifies 8bit instruction, 8bit register (if any),
+//           an 8bit value, and a 32bit secondary value
+mi2 = (I, O, V1, V2) => [mi(I, O, V1), n(V2)]
 bits = (N) => N.toString(2)
 
 o_nop = 0x0;
@@ -37,7 +58,14 @@ o_peek= 0x8; // peek at stack
 o_stle= 0x9; // get stack length
 o_jcmp= 0xA; // jump with comparison
              // jcmp mt0, 34     # only jumps to 34 if mt0 is 1
-o_xor = 0xB; // xor [reg1], [mask]
+o_bit = 0xB; // perform bit operation: bit [op:xor,etc], [8bit:reg1,8bit:reg2],32bit:mask or val]
+o_int = 0xC; // extended instruction
+o_idis = 0x01; // disable interrupts (cause them to pend)
+o_iena = 0x02; // enable interrupts
+o_istp = 0x03; // setup interrupt [8bit:id,8bit:register_with_call_addr]
+               // interrupt gets called with return address, int id, followed by custom arguments
+o_idel = 0x04; // delete interrupt [16bit:id]
+o_iint = 0x05; // call interrupt (8bit:id) (push a value first if needed)
 o_ext = 0xF; // extended instruction
 o_e_halt = 0x01; // halt system
 o_e_stat = 0x0F; // print state
@@ -52,9 +80,14 @@ ops.pop = o_pop;
 ops.peek= o_peek;
 ops.stle= o_stle;
 ops.jcmp= o_jcmp;
-ops.xor = o_xor;
-ops.halt = (0xF0) | o_e_halt;
-ops.stat = (0xF0) | o_e_stat;
+//ops.xor = o_xor;
+ops.idis=  o_idis;
+ops.iena=  o_iena;
+ops.istp=  o_istp;
+ops.idel=  o_idel;
+ops.int =  o_iint;
+ops.halt = o_e_halt;
+ops.stat = o_e_stat;
 
 r_cp  = 0x0;
 r_r0  = 0x1;
@@ -94,15 +127,20 @@ _lra = (Reg, Adr) => mi(o_lra, Reg, Adr)
 _rlr = (R0, R1)   => mi(o_rlr, R0,  R1)
 _in  = (Port)     => mi(o_in,  Port, 0x0)
 _out = (Port, Reg)=> mi(o_out, Reg, Port)
-_push= (Value)    => mi1(o_psh, Value)
+_push= (Value)    => mi(o_psh, Value, 0x0)
 _pop = (Reg)      => mi(o_pop,  Reg, 0x0)
 _peek= (Reg)      => mi(o_peek, Reg, 0x0)
 _stle= ()         => mi(o_stle, 0x0, 0x0)
 _jcmp= (WhichReg, Location) =>
     mi(o_jcmp, WhichReg, Location)
 _xor = (Reg, Mask)=> mi(o_xor, Reg, Mask)
-_halt= ()         => 0x1F << 8;
-_stat= ()         => 0xFF << 8;
+_halt= ()         => mi(o_ext, o_e_halt, 0)
+_stat= ()         => mi(o_ext, o_e_stat, 0)
+_idis= ()         => mi(o_int, o_idis, 0x0 << 8)
+_iena= ()         => mi(o_int, o_iena, 0x0 << 8)
+_istp= (Id, Reg)  => mi(o_int, o_istp, (Id << 8) | Reg)
+_idel= (Id)       => mi(o_int, o_del,  (Id << 8))
+_int=  (Id)       => mi(o_int, o_iint, (Id << 8))
 ins = {};
 ins.nop = _nop;
 ins.lrl = _lrl;
@@ -118,6 +156,11 @@ ins.jcmp= _jcmp;
 ins.xor = _xor;
 ins.halt=_halt;
 ins.stat=_stat;
+ins.idis=_idis;
+ins.iena=_iena;
+ins.istp=_istp;
+ins.idel=_idel;
+ins.int =_int;
 
 // Extended instructions take more than a 32bit instruction size.
 // Their total size is indicated by this table, which is currently empty.
@@ -276,6 +319,37 @@ code = `
         halt
 `;
 
+code = `
+    idis
+    lrl r0, '!'
+    lrl r1, 'i'
+    lrl r2, 'H'
+    push r0
+    push r1
+    push r2
+    lrl r0, $handler
+    istp 42, r0 # setup interrupt
+    iena # enable interrupts
+    int 42
+    # print newline
+    lrl r0, 10
+    out stdout, r0
+    halt
+
+    handler:
+    stat
+    pop r0   # int id (ignore, but should be 1)
+    pop r1   # return addr
+    pop r2   # char to print
+    out stdout, r2
+    pop r2
+    out stdout, r2
+    pop r2
+    out stdout, r2
+    push r1  # return to
+    pop cp   # caller
+`;
+
 const flatten = arr => arr.reduce(
   (a, b) => a.concat(Array.isArray(b) ? flatten(b) : b), []
 );
@@ -353,7 +427,7 @@ function compile (c) {
         return ins[i].apply({}, params);
     });
     result = flatten(result);
-    dbg("\n\nFinal result:\n\n",result);
+    dbg("\n\nFinal result:\n\n",result.map(N=>"0x"+N.toString(16)));
     return result;
 }
 
@@ -526,6 +600,8 @@ function VSVM (code) {
     this.ports[p_stderr] = port_stderr;
     this.halt = false;
     this.stack = [];
+    this.interrupts = {}; // id => handler
+    this.interrupts_enabled = false;
 }
 
 VSVM.prototype.cycle = function() {
@@ -539,15 +615,19 @@ VSVM.prototype.cycle = function() {
         throw 'no instruction';
 
     // Break down instruction
-    dbg("  Instruction:", i.toString(2), i);
-    var op = i >> 8;
+    // TODO: This is probably quicker as bit operations. Figure it out.
+    var ab = new ArrayBuffer(4);
+    var av = new DataView(ab);
+    av.setUint32(0, i);
+    op = av.getUint16(0);
+    val = av.getUint16(2);
+    optop = av.getUint8(0);
+    opbot = av.getUint8(1);
+    dbg("  Instruction:", i.toString(2), "0x" + i.toString(16));
     dbg("  Op:", op.toString(2), op);
-    var val = i & 0xFF;
-    var opbot = op >> 4;
-    var optop = op & 0xF;
-    dbg("  Optop:", optop.toString(2), optop);
-    dbg("  Opbot:", opbot.toString(2), opbot);
-    dbg("  Value:", val.toString(2), val);
+    dbg("  Optop:", optop.toString(2), "0x" + optop.toString(16));
+    dbg("  Opbot:", opbot.toString(2), "0x" + opbot.toString(16));
+    dbg("  Value:", val.toString(2), "0x" + val.toString(16));
 
     var v = 0x0;
 
@@ -565,9 +645,9 @@ VSVM.prototype.cycle = function() {
             this.ports[val].out(this.regs[opbot]);
             break;
         case o_psh:
-            dbg("PUSH value in reg: " + regs[val] + "(" + this.regs[val] + ")");
-            this.stack.push(this.regs[val]);
-            v = this.regs[val];
+            dbg("PUSH value in reg: " + regs[opbot] + "(" + this.regs[opbot] + ")");
+            this.stack.push(this.regs[opbot]);
+            v = this.regs[opbot];
             break;
         case o_pop:
             this.regs[opbot] = this.stack.pop();
@@ -583,6 +663,35 @@ VSVM.prototype.cycle = function() {
             dbg("JCMP, jump to " + val + " if " + regs[opbot] + "(" + this.regs[opbot] + ") is !0");
             if(this.regs[opbot])
                 this.regs[r_cp] = val;
+            break;
+        case o_int:
+            // Interrupt functions
+            var inttop = av.getUint8(2);
+            var intbot = av.getUint8(3);
+            dbg("    INT instruction: 0x" + val.toString(16));
+            dbg("    Top: 0x" + inttop.toString(16));
+            dbg("    Bot: 0x" + intbot.toString(16));
+            switch(opbot) {
+                case o_idis:
+                    this.interrupts_enabled = false;
+                    dbg("IDIS, interrupts_enabled = false");
+                    break;
+                case o_iena:
+                    this.interrupts_enabled = true;
+                    dbg("IENA, interrupts_enabled = true");
+                    break;
+                case o_istp:
+                    dbg("ISTP " + inttop + " using " + regs[intbot] + " (" + this.regs[intbot] + ")");
+                    this.setupInterrupt(inttop, this.regs[intbot]);
+                    break;
+                case o_iint:
+                    dbg("INT 0x" + inttop.toString(16) + " (" + inttop + ")");
+                    this.Interrupt(inttop);
+                    break;
+                default:
+                    dbg("Unhandled int: 0x" + opbot.toString(16));
+                    break;
+            }
             break;
         case 0xF:
             // Extended operations
@@ -627,8 +736,28 @@ VSVM.prototype.getStatePretty = function() {
     return s.join(', ') + ' }';
 };
 
+VSVM.prototype.setupInterrupt = function (Id, Cp) {
+    this.interrupts[Id] = Cp;
+};
+
+VSVM.prototype.deleteInterrupt = function (Id) {
+    delete this.interrupts[Id];
+};
+
+VSVM.prototype.Push = function(Value) {
+    this.stack.push(Value);
+};
+
+VSVM.prototype.Interrupt = function(Id) {
+    dbg("    Pushing current cp (" + this.regs[r_cp] + ")");
+    this.Push(this.regs[r_cp]);
+    dbg("    Pushing int id (" + Id + ")");
+    this.Push(Id);
+    dbg("    Updating cp to handler (" + this.interrupts[Id].toString(16) + ")");
+    this.regs[r_cp] = this.interrupts[Id];
+};
+
 var compiled = compile(code);
-dbg("Compiled code: ", compiled);
 var vm = new VSVM(compiled);
 
 if(1) do {
