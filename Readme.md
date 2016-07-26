@@ -9,4 +9,6 @@ It features an assembler.
 
 It requires no additional modules.
 
-The main execution loop takes just over 50 lines of code.
+The main execution loop is fairly small.
+
+It somewhat supports interrupts.
