@@ -16,7 +16,7 @@ var VSVM = require('./lib/vm').VSVM;
  */
 
 // Print: 'Hi!\n'
-var code = "lrl r0, 'H'\n" +
+var print_hi = () => "lrl r0, 'H'\n" +
 	   "lrl r1, 'i'\n" +
 	   "lrl r2, '!'\n" +
 	   "lrl r3, 10\n" +
@@ -28,7 +28,7 @@ var code = "lrl r0, 'H'\n" +
 
 // print 'Hello!' by using accumulator and decumulator and
 // operating on the last character pushed
-code = 
+var print_hello = () =>
 	   // push '!'
 	   "lrl r0, '!'\n" +
 	   "push r0\n" +
@@ -70,7 +70,7 @@ code =
 	   "halt\n";
 
 // Test the comment parsing and label substitution
-code = `
+var comment_parsing = () => `
 # This is a comment
 start:      # Also a comment
 lrl r0, 1   # Final comment
@@ -92,14 +92,15 @@ end:
 halt
 `;
 
-if(0) code = `
+var push_in_quotes = () => `
 lrl r0, '#'    # Push something in quotes
 push r0
 stat
 halt
 `;
 
-if(0)code = "lrl r0, 65\n" +
+var simple_stack_testing = () =>
+	   "lrl r0, 65\n" +
 	   "push r0\n" +
 	   "lrl r0, 0\n" +
 	   "peek r0\n" +
@@ -110,7 +111,7 @@ if(0)code = "lrl r0, 65\n" +
 	   "halt";
 
 // Print the numbers 0 - 9 and halt
-code = `
+var print_numbers = () => `
 	# uses r2 for current count
 	lrl r2, 1
 	# uses r3 for character to output
@@ -155,7 +156,7 @@ code = `
 		halt
 `;
 
-code = `
+var interrupt_test = () => `
 	idis
 	lrl r0, '!'
 	lrl r1, 'i'
@@ -174,7 +175,7 @@ code = `
 
 	handler:
 	stat
-	pop r0   # int id (ignore, but should be 1)
+	pop r0   # int id (ignore, but should be 42)
 	pop r1   # return addr
 	pop r2   # char to print
 	out stdout, r2
@@ -187,7 +188,7 @@ code = `
 `;
 
 
-var compiled = compile(code);
+var compiled = compile(interrupt_test());
 var vm = new VSVM(compiled);
 
 if(1) do {
