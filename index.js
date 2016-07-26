@@ -16,7 +16,7 @@ var VSVM = require('./lib/vm').VSVM;
  */
 
 // Print: 'Hi!\n'
-code = "lrl r0, 'H'\n" +
+var code = "lrl r0, 'H'\n" +
 	   "lrl r1, 'i'\n" +
 	   "lrl r2, '!'\n" +
 	   "lrl r3, 10\n" +
